@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Notes - Video Conference Annotator</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>AI Notes</h1>
+    <p class="subtitle">Paste your meeting transcript to get a concise summary, key points, actions, and decisions.</p>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <h2>Input Transcript</h2>
+      <div class="controls">
+        <label class="file">Load file (.txt, .srt, .vtt)
+          <input id="fileInput" type="file" accept=".txt,.srt,.vtt">
+        </label>
+
+        <label>Summary length
+          <select id="length">
+            <option value="short">Short</option>
+            <option value="medium" selected>Medium</option>
+            <option value="long">Long</option>
+          </select>
+        </label>
+
+        <button id="annotateBtn" class="primary">Generate annotations</button>
+      </div>
+
+      <textarea id="transcript" placeholder="Paste your transcript here..."></textarea>
+      <div id="status" class="status" hidden>Processing…</div>
+    </section>
+
+    <section class="panel">
+      <h2>From Video</h2>
+      <div class="controls">
+        <label class="file">Upload video
+          <input id="videoInput" type="file" accept="video/*">
+        </label>
+        <label>Summary length
+          <select id="lengthVideo">
+            <option value="short">Short</option>
+            <option value="medium" selected>Medium</option>
+            <option value="long">Long</option>
+          </select>
+        </label>
+        <label>Language (optional)
+          <input id="langVideo" type="text" placeholder="en, es, fr..." style="background:#0e1524;color:#e6eefc;border:1px solid var(--border);border-radius:8px;padding:8px">
+        </label>
+        <button id="transcribeBtn" class="primary">Transcribe & annotate</button>
+      </div>
+      <div id="statusVideo" class="status" hidden>Transcribing… this may take a while.</div>
+    </section>
+
+    <section class="panel results" id="results" hidden>
+      <h2>Results</h2>
+
+      <div class="result-block">
+        <div class="block-header">
+          <h3>Summary</h3>
+          <button class="ghost" data-copy="#summaryText">Copy</button>
+        </div>
+        <p id="summaryText" class="summary"></p>
+      </div>
+
+      <div class="result-grid">
+        <div class="result-block">
+          <div class="block-header">
+            <h3>Key points</h3>
+            <button class="ghost" data-copy="#keyPoints">Copy</button>
+          </div>
+          <ul id="keyPoints"></ul>
+        </div>
+
+        <div class="result-block">
+          <div class="block-header">
+            <h3>Keywords</h3>
+            <button class="ghost" data-copy="#keywords">Copy</button>
+          </div>
+          <div id="keywords" class="tags"></div>
+        </div>
+      </div>
+
+      <div class="result-grid">
+        <div class="result-block">
+          <div class="block-header">
+            <h3>Action items</h3>
+            <button class="ghost" data-copy="#actions">Copy</button>
+          </div>
+          <ul id="actions"></ul>
+        </div>
+
+        <div class="result-block">
+          <div class="block-header">
+            <h3>Decisions</h3>
+            <button class="ghost" data-copy="#decisions">Copy</button>
+          </div>
+          <ul id="decisions"></ul>
+        </div>
+      </div>
+
+      <div class="meta" id="meta"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>Local summarization (no external API). Works with .txt / .srt / .vtt.</span>
+  </footer>
+
+  <script>
+    const el = (sel) => document.querySelector(sel);
+    const statusEl = el('#status');
+    const resultsEl = el('#results');
+    const statusVideoEl = el('#statusVideo');
+
+    el('#fileInput').addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        el('#transcript').value = String(reader.result || '');
+      };
+      reader.readAsText(file);
+    });
+
+    function setLoading(isLoading) {
+      statusEl.hidden = !isLoading;
+      el('#annotateBtn').disabled = isLoading;
+    }
+
+    function setLoadingVideo(isLoading) {
+      statusVideoEl.hidden = !isLoading;
+      el('#transcribeBtn').disabled = isLoading;
+    }
+
+    function copyFromSelector(selector) {
+      const node = el(selector);
+      if (!node) return;
+      const text = node.tagName === 'UL'
+        ? Array.from(node.querySelectorAll('li')).map(li => li.textContent).join('\n')
+        : node.textContent;
+      navigator.clipboard.writeText(text || '');
+    }
+
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target && target.matches('button[data-copy]')) {
+        const sel = target.getAttribute('data-copy');
+        if (sel) copyFromSelector(sel);
+      }
+    });
+
+    async function annotate() {
+      const transcript = el('#transcript').value.trim();
+      const summary_length = el('#length').value;
+      if (!transcript) {
+        alert('Please paste or load a transcript.');
+        return;
+      }
+      setLoading(true);
+      try {
+        const res = await fetch('/api/annotate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript, summary_length })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Request failed: ${res.status}`);
+        }
+        const data = await res.json();
+        renderResults(data);
+      } catch (err) {
+        alert(err.message || String(err));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function renderResults(data) {
+      resultsEl.hidden = false;
+      el('#summaryText').textContent = data.summary || '';
+
+      const keyPoints = el('#keyPoints');
+      keyPoints.innerHTML = '';
+      (data.key_points || []).forEach(p => {
+        const li = document.createElement('li');
+        li.textContent = p;
+        keyPoints.appendChild(li);
+      });
+
+      const keywords = el('#keywords');
+      keywords.innerHTML = '';
+      (data.keywords || []).forEach(k => {
+        const span = document.createElement('span');
+        span.className = 'tag';
+        span.textContent = k;
+        keywords.appendChild(span);
+      });
+
+      const actions = el('#actions');
+      actions.innerHTML = '';
+      (data.actions || []).forEach(a => {
+        const li = document.createElement('li');
+        li.textContent = a;
+        actions.appendChild(li);
+      });
+
+      const decisions = el('#decisions');
+      decisions.innerHTML = '';
+      (data.decisions || []).forEach(d => {
+        const li = document.createElement('li');
+        li.textContent = d;
+        decisions.appendChild(li);
+      });
+
+      const stats = data.stats || {};
+      el('#meta').textContent = `Analyzed ${stats.num_sentences || 0} sentences, ${stats.num_words || 0} words.`;
+    }
+
+    el('#annotateBtn').addEventListener('click', annotate);
+    el('#transcribeBtn').addEventListener('click', async () => {
+      const file = el('#videoInput').files?.[0];
+      if (!file) { alert('Please select a video file.'); return; }
+      setLoadingVideo(true);
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('summary_length', el('#lengthVideo').value);
+        const lang = el('#langVideo').value.trim();
+        if (lang) fd.append('language', lang);
+        const res = await fetch('/api/transcribe_annotate', { method: 'POST', body: fd });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Request failed: ${res.status}`);
+        }
+        const data = await res.json();
+        // Optionally place transcript into textarea for reference
+        if (data.transcript) el('#transcript').value = data.transcript;
+        renderResults(data);
+      } catch (err) {
+        alert(err.message || String(err));
+      } finally {
+        setLoadingVideo(false);
+      }
+    });
+  </script>
+  
+</body>
+</html>
+
+
