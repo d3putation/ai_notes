@@ -1,5 +1,7 @@
 # AI Notes – Video Conference Annotation Panel
 
+https://github.com/user-attachments/assets/434343ce-d5aa-41c2-8c8e-860fbe2a5556
+
 Summarize meeting transcripts into a concise summary, key points, keywords, action items, and decisions. Works locally with no external AI APIs.
 
 ## Features
@@ -19,6 +21,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pip install --no-deps faster-whisper==1.0.3
 ```
+
+
+
 
 2) Install ffmpeg (required for video/audio decoding)
 
